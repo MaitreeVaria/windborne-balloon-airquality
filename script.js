@@ -4,16 +4,17 @@ L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
   maxZoom: 18,
 }).addTo(map);
 
+// 🎈 Emoji marker instead of image
 const balloonIcon = L.divIcon({
   html: `<div style="
-    font-size:32px;
+    font-size: 32px;
     transform: translate(-50%, -50%);
   ">🎈</div>`,
   className: "",
-  iconSize: [32, 32]
+  iconSize: [32, 32],
 });
 
-// Create a big cluster group (with larger cluster dots)
+// Cluster group with big bubbles
 const clusterGroup = L.markerClusterGroup({
   maxClusterRadius: 60,
   iconCreateFunction: function (cluster) {
@@ -39,7 +40,7 @@ const clusterGroup = L.markerClusterGroup({
   },
 });
 
-// Deduplication map
+// Deduplicate positions (one marker per ~0.01° tile)
 const seen = new Set();
 
 async function fetchBalloonHistory() {
@@ -58,12 +59,16 @@ async function fetchBalloonHistory() {
       }
 
       json.forEach((point) => {
-        if (point.length >= 2) {
-          const lat = point[0];
-          const lon = point[1];
-          const alt = point[2] || null;
+        if (Array.isArray(point) && point.length >= 2) {
+          const lat = Number(point[0]);
+          const lon = Number(point[1]);
+          const alt = point[2] != null ? Number(point[2]) : null;
 
-          // Dedup key rounded to reduce density (tune this!)
+          if (Number.isNaN(lat) || Number.isNaN(lon)) {
+            return;
+          }
+
+          // Dedup key: round to 0.01 degrees
           const key = lat.toFixed(2) + "," + lon.toFixed(2);
 
           if (!seen.has(key)) {
@@ -80,12 +85,36 @@ async function fetchBalloonHistory() {
   return balloons;
 }
 
+// 🌫️ Air quality via Open-Meteo (no backend, no CORS drama)
 async function fetchAQ(lat, lon) {
   try {
-    const res = await fetch(`/api/aq?lat=${lat}&lon=${lon}`);
+    const url =
+      `https://air-quality-api.open-meteo.com/v1/air-quality` +
+      `?latitude=${lat}&longitude=${lon}` +
+      `&hourly=pm2_5,pm10,us_aqi&timezone=auto`;
+
+    const res = await fetch(url);
+    if (!res.ok) {
+      console.log("Open-Meteo AQ error status:", res.status);
+      return null;
+    }
+
     const data = await res.json();
-    return data.results?.[0] || null;
-  } catch {
+    const hourly = data.hourly;
+    if (!hourly || !hourly.us_aqi || !hourly.us_aqi.length) {
+      return null;
+    }
+
+    const idx = hourly.us_aqi.length - 1; // most recent hour
+
+    return {
+      aqi: hourly.us_aqi[idx],
+      pm25: hourly.pm2_5 ? hourly.pm2_5[idx] : null,
+      pm10: hourly.pm10 ? hourly.pm10[idx] : null,
+      time: hourly.time ? hourly.time[idx] : null,
+    };
+  } catch (err) {
+    console.log("Error fetching AQ:", err);
     return null;
   }
 }
@@ -94,24 +123,31 @@ async function plotBalloons() {
   const balloons = await fetchBalloonHistory();
 
   for (const b of balloons) {
-    const { lat, lon, alt } = b;
+    const lat = b.lat;
+    const lon = b.lon;
+    const alt = b.alt;
 
     const aq = await fetchAQ(lat, lon);
+
+    let aqHtml = "No air-quality data available";
+    if (aq) {
+      aqHtml = `
+        AQI (US): ${aq.aqi ?? "N/A"}<br>
+        PM2.5: ${aq.pm25 ?? "N/A"} µg/m³<br>
+        PM10: ${aq.pm10 ?? "N/A"} µg/m³<br>
+        Time: ${aq.time ?? "N/A"}
+      `;
+    }
 
     const popupText = `
       <strong>Balloon</strong><br>
       <strong>Lat:</strong> ${lat.toFixed(3)}<br>
       <strong>Lon:</strong> ${lon.toFixed(3)}<br>
-      <strong>Altitude:</strong> ${alt || "N/A"} m<br><br>
-      <strong>Air Quality:</strong><br>
-      ${
-        aq
-          ? `AQI: ${aq.measurements?.[0]?.value} ${
-              aq.measurements?.[0]?.unit
-            }<br>
-          Pollutant: ${aq.measurements?.[0]?.parameter}`
-          : "No AQI data available"
-      }
+      <strong>Altitude:</strong> ${
+        alt != null ? alt.toFixed(1) + " m" : "N/A"
+      }<br><br>
+      <strong>Air Quality (Open-Meteo):</strong><br>
+      ${aqHtml}
     `;
 
     const marker = L.marker([lat, lon], { icon: balloonIcon }).bindPopup(
@@ -126,7 +162,7 @@ async function plotBalloons() {
 
 plotBalloons();
 
-// Auto-refresh every minute
+// Refresh once a minute to get live constellation + AQ updates
 setInterval(() => {
   location.reload();
 }, 60000);
