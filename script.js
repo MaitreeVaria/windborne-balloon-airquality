@@ -15,16 +15,33 @@ async function fetchBalloonHistory() {
 
   for (let i = 0; i < 24; i++) {
     const hour = String(i).padStart(2, "0");
+
     try {
       const res = await fetch(`/api/balloon?hour=${hour}`);
-      if (!res.ok) throw new Error("Bad response");
+      const json = await res.json();
 
-      const data = await res.json();
-      if (data && data.features) {
-        balloons.push(...data.features);
+      // Skip errors
+      if (!json || json.error) {
+        console.log("Skipped corrupted or unavailable file:", hour);
+        continue;
       }
-    } catch {
-      console.log("Skipped corrupted or unavailable file:", hour);
+
+      // If the data is an array of balloon points (actual WindBorne format)
+      if (Array.isArray(json)) {
+        json.forEach(point => {
+          // Format: [lat, lon, alt]
+          if (point.length >= 2 && !isNaN(point[0]) && !isNaN(point[1])) {
+            balloons.push({
+              lat: point[0],
+              lon: point[1],
+              alt: point[2] || null
+            });
+          }
+        });
+      }
+
+    } catch (error) {
+      console.log("Error fetching hour:", hour, error);
     }
   }
 
@@ -45,19 +62,18 @@ async function fetchAQ(lat, lon) {
 async function plotBalloons() {
   const balloons = await fetchBalloonHistory();
 
-  balloons.forEach(async (balloon) => {
-    const coords = balloon.geometry?.coordinates;
-    if (!coords || coords.length < 2) return;
-
-    const [lon, lat] = coords;
+  balloons.forEach(async (b) => {
+    const lat = b.lat;
+    const lon = b.lon;
+    const alt = b.alt;
 
     const aq = await fetchAQ(lat, lon);
 
     const popupText = `
-      <strong>Balloon ID:</strong> ${balloon.properties?.id || "N/A"}<br>
+      <strong>Balloon</strong><br>
       <strong>Lat:</strong> ${lat.toFixed(3)}<br>
       <strong>Lon:</strong> ${lon.toFixed(3)}<br>
-      <strong>Altitude:</strong> ${balloon.properties?.alt || "N/A"} m<br><br>
+      <strong>Altitude:</strong> ${alt || "N/A"} m<br><br>
       <strong>Air Quality:</strong><br>
       ${
         aq
