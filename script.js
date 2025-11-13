@@ -4,9 +4,13 @@ L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
   maxZoom: 18,
 }).addTo(map);
 
-const balloonIcon = L.icon({
-  iconUrl: "assets/balloon.png",
-  iconSize: [38, 38],
+const balloonIcon = L.divIcon({
+  html: `<div style="
+    font-size:32px;
+    transform: translate(-50%, -50%);
+  ">🎈</div>`,
+  className: "",
+  iconSize: [32, 32]
 });
 
 // Create a big cluster group (with larger cluster dots)
