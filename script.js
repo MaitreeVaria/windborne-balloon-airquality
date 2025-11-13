@@ -5,7 +5,7 @@ L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
 }).addTo(map);
 
 const balloonIcon = L.icon({
-  iconUrl: "assets/balloon.png",
+  iconUrl: "balloon.png",
   iconSize: [38, 38],
 });
 
