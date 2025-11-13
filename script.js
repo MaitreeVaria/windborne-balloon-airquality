@@ -82,9 +82,7 @@ async function fetchBalloonHistory() {
 
 async function fetchAQ(lat, lon) {
   try {
-    const res = await fetch(
-      `https://api.openaq.org/v2/latest?coordinates=${lat},${lon}`
-    );
+    const res = await fetch(`/api/aq?lat=${lat}&lon=${lon}`);
     const data = await res.json();
     return data.results?.[0] || null;
   } catch {
