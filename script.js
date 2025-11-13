@@ -5,37 +5,36 @@ L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
 }).addTo(map);
 
 const balloonIcon = L.icon({
-  iconUrl: "balloon.png",
-  iconSize: [38, 38],
+  iconUrl: "assets/balloon.png",
+  iconSize: [38, 38]
 });
 
-// Fetch balloon flight data for last 24 hours
+// Fetch last 24 hours of balloon data through Vercel proxy
 async function fetchBalloonHistory() {
-  const all = [];
+  const balloons = [];
 
   for (let i = 0; i < 24; i++) {
+    const hour = String(i).padStart(2, "0");
     try {
-      const url = `https://a.windbornesystems.com/treasure/${String(i).padStart(2, "0")}.json`;
-      const res = await fetch(url);
+      const res = await fetch(`/api/balloon?hour=${hour}`);
+      if (!res.ok) throw new Error("Bad response");
 
-      if (!res.ok) continue;
-
-      const json = await res.json();
-      if (json && json.features) all.push(...json.features);
-    } catch (err) {
-      console.log("Skipped corrupted file:", i);
+      const data = await res.json();
+      if (data && data.features) {
+        balloons.push(...data.features);
+      }
+    } catch {
+      console.log("Skipped corrupted or unavailable file:", hour);
     }
   }
 
-  return all;
+  return balloons;
 }
 
-// Fetch air quality for the latest balloon location
+// Air quality request
 async function fetchAQ(lat, lon) {
   try {
-    const res = await fetch(
-      `https://api.openaq.org/v2/latest?coordinates=${lat},${lon}`
-    );
+    const res = await fetch(`https://api.openaq.org/v2/latest?coordinates=${lat},${lon}`);
     const data = await res.json();
     return data.results?.[0] || null;
   } catch {
@@ -48,10 +47,10 @@ async function plotBalloons() {
 
   balloons.forEach(async (balloon) => {
     const coords = balloon.geometry?.coordinates;
-
     if (!coords || coords.length < 2) return;
 
     const [lon, lat] = coords;
+
     const aq = await fetchAQ(lat, lon);
 
     const popupText = `
@@ -78,7 +77,7 @@ async function plotBalloons() {
 
 plotBalloons();
 
-// Refresh every 1 minute
+// Auto-refresh
 setInterval(() => {
   location.reload();
 }, 60000);
