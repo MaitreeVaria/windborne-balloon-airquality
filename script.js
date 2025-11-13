@@ -1,15 +1,43 @@
-const map = L.map('map').setView([20, 0], 2);
+const map = L.map("map").setView([20, 0], 2);
 
-L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
-  maxZoom: 18
+L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+  maxZoom: 18,
 }).addTo(map);
 
 const balloonIcon = L.icon({
   iconUrl: "assets/balloon.png",
-  iconSize: [38, 38]
+  iconSize: [38, 38],
 });
 
-// Fetch last 24 hours of balloon data through Vercel proxy
+// Create a big cluster group (with larger cluster dots)
+const clusterGroup = L.markerClusterGroup({
+  maxClusterRadius: 60,
+  iconCreateFunction: function (cluster) {
+    const count = cluster.getChildCount();
+    return L.divIcon({
+      html: `<div style="
+        background:#3f51b5;
+        color:white;
+        width:50px;
+        height:50px;
+        display:flex;
+        justify-content:center;
+        align-items:center;
+        border-radius:50%;
+        font-size:18px;
+        font-weight:bold;
+        border:3px solid white;
+        box-shadow:0 0 10px rgba(0,0,0,0.3);
+      ">${count}</div>`,
+      className: "balloon-cluster",
+      iconSize: [50, 50],
+    });
+  },
+});
+
+// Deduplication map
+const seen = new Set();
+
 async function fetchBalloonHistory() {
   const balloons = [];
 
@@ -20,38 +48,39 @@ async function fetchBalloonHistory() {
       const res = await fetch(`/api/balloon?hour=${hour}`);
       const json = await res.json();
 
-      // Skip errors
-      if (!json || json.error) {
-        console.log("Skipped corrupted or unavailable file:", hour);
+      if (!Array.isArray(json) || json.error) {
+        console.log("Skipped corrupted hour:", hour);
         continue;
       }
 
-      // If the data is an array of balloon points (actual WindBorne format)
-      if (Array.isArray(json)) {
-        json.forEach(point => {
-          // Format: [lat, lon, alt]
-          if (point.length >= 2 && !isNaN(point[0]) && !isNaN(point[1])) {
-            balloons.push({
-              lat: point[0],
-              lon: point[1],
-              alt: point[2] || null
-            });
-          }
-        });
-      }
+      json.forEach((point) => {
+        if (point.length >= 2) {
+          const lat = point[0];
+          const lon = point[1];
+          const alt = point[2] || null;
 
-    } catch (error) {
-      console.log("Error fetching hour:", hour, error);
+          // Dedup key rounded to reduce density (tune this!)
+          const key = lat.toFixed(2) + "," + lon.toFixed(2);
+
+          if (!seen.has(key)) {
+            seen.add(key);
+            balloons.push({ lat, lon, alt });
+          }
+        }
+      });
+    } catch (err) {
+      console.log("Error fetching hour:", hour, err);
     }
   }
 
   return balloons;
 }
 
-// Air quality request
 async function fetchAQ(lat, lon) {
   try {
-    const res = await fetch(`https://api.openaq.org/v2/latest?coordinates=${lat},${lon}`);
+    const res = await fetch(
+      `https://api.openaq.org/v2/latest?coordinates=${lat},${lon}`
+    );
     const data = await res.json();
     return data.results?.[0] || null;
   } catch {
@@ -62,10 +91,8 @@ async function fetchAQ(lat, lon) {
 async function plotBalloons() {
   const balloons = await fetchBalloonHistory();
 
-  balloons.forEach(async (b) => {
-    const lat = b.lat;
-    const lon = b.lon;
-    const alt = b.alt;
+  for (const b of balloons) {
+    const { lat, lon, alt } = b;
 
     const aq = await fetchAQ(lat, lon);
 
@@ -77,23 +104,27 @@ async function plotBalloons() {
       <strong>Air Quality:</strong><br>
       ${
         aq
-          ? `
-        AQI: ${aq.measurements?.[0]?.value} ${aq.measurements?.[0]?.unit}<br>
-        Pollutant: ${aq.measurements?.[0]?.parameter}
-        `
+          ? `AQI: ${aq.measurements?.[0]?.value} ${
+              aq.measurements?.[0]?.unit
+            }<br>
+          Pollutant: ${aq.measurements?.[0]?.parameter}`
           : "No AQI data available"
       }
     `;
 
-    L.marker([lat, lon], { icon: balloonIcon })
-      .addTo(map)
-      .bindPopup(popupText);
-  });
+    const marker = L.marker([lat, lon], { icon: balloonIcon }).bindPopup(
+      popupText
+    );
+
+    clusterGroup.addLayer(marker);
+  }
+
+  map.addLayer(clusterGroup);
 }
 
 plotBalloons();
 
-// Auto-refresh
+// Auto-refresh every minute
 setInterval(() => {
   location.reload();
 }, 60000);
